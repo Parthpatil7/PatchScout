@@ -41,4 +41,4 @@ The development of a large language model (LLM) or similar AI techniques-based t
 
 ---
 
-Ultimately, PatchScout aims to combine the power of LLMs and AI with traditional vulnerability detection and mitigation techniques, making it a highly valuable tool for open-source software development teams.
+Ultimately, PatchScout aims to combine the power of LLMs and AI with traditional vulnerability detection and mitigation techniques  making it a highly valuable tool for open-source software development teams.
