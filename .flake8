@@ -1,0 +1,11 @@
+[flake8]
+max-line-length = 120
+extend-ignore = E203,W503
+exclude =
+    src/ml,
+    src/parsers,
+    src/analyzers/language_detector.py,
+    src/detectors/cwe_mapper.py,
+    src/utils/config_loader.py,
+    src/reporting/__init__.py,
+    src/utils/__init__.py

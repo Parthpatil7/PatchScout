@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -24,7 +27,7 @@ jobs:
       - name: Static checks
         run: |
           python -m compileall src
-          flake8 src/main.py src/analyzers/code_analyzer.py src/detectors/vulnerability_detector.py src/detectors/cve_mapper.py src/reporting/report_generator.py src/utils/dataset_loader.py tests --max-line-length=120 --extend-ignore=E203,W503
+          flake8 src tests
 
       - name: Run tests
         run: pytest -q

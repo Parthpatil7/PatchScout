@@ -20,7 +20,7 @@ from .utils import ConfigLoader
 console = Console()
 logger = logging.getLogger(__name__)
 
-SUPPORTED_CLI_LANGUAGES = ['java', 'python', 'c', 'cpp', 'php']
+SUPPORTED_CLI_LANGUAGES = tuple(sorted(CodeAnalyzer.SUPPORTED_LANGUAGES))
 
 
 def configure_logging(config: dict, verbose: bool = False) -> None:

@@ -41,6 +41,7 @@ class CodeAnalyzer:
             self.config.get('detection', {}).get('max_file_size_mb', 10)
         )
         self.max_workers = int(self.config.get('performance', {}).get('max_workers', 1))
+        self.supported_languages_sorted = sorted(self.SUPPORTED_LANGUAGES)
         self.last_scan_summary: Dict[str, Any] = {}
 
     def analyze_file(self, file_path: str, language: Optional[str] = None) -> Dict[str, Any]:
@@ -81,7 +82,7 @@ class CodeAnalyzer:
                 'success': False,
                 'error': (
                     f"Language '{language}' is detected but not yet supported by analyzer backend. "
-                    f"Supported languages: {sorted(self.SUPPORTED_LANGUAGES)}"
+                    f"Supported languages: {self.supported_languages_sorted}"
                 ),
                 'file_path': file_path,
                 'language': language,
