@@ -44,7 +44,7 @@ python -m src.main -d test_samples --format both
 Run the test suite:
 
 ```bash
-python test_patchscout.py
+pytest -q
 ```
 
 ## Expected Output
