@@ -1,18 +1,12 @@
-"""ML module for PatchScout"""
+"""ML module — Stream B: DeepSeek 6.7B (local via Ollama) + Tree-sitter AST"""
 
-from .codebert_model import CodeBERTVulnerabilityDetector, GraphCodeBERTDetector
-from .dataset_downloader import MLDatasetDownloader
-from .data_preprocessor import CodePreprocessor
-from .trainer import VulnerabilityDataset, VulnerabilityTrainer
+from .ast_extractor  import ASTExtractor
+from .deepseek_runner import DeepSeekRunner
 from .hybrid_detector import HybridVulnerabilityDetector, MLModelManager
 
 __all__ = [
-    'CodeBERTVulnerabilityDetector',
-    'GraphCodeBERTDetector',
-    'MLDatasetDownloader',
-    'CodePreprocessor',
-    'VulnerabilityDataset',
-    'VulnerabilityTrainer',
-    'HybridVulnerabilityDetector',
-    'MLModelManager'
+    "ASTExtractor",
+    "DeepSeekRunner",
+    "HybridVulnerabilityDetector",
+    "MLModelManager",
 ]

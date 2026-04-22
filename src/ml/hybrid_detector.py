@@ -1,267 +1,278 @@
 """
-Hybrid Detection System
-Combines ML-based detection with pattern-based detection
+Hybrid Detection System — Stream A + Stream B Weighted Fusion
+Architecture: Static(Semgrep/Flawfinder) + DeepSeek 6.7B → Fusion Engine → Tagged Results
+
+Fusion formula:  score = (0.6 × ML_confidence) + (0.4 × static_flag)
+Detection tags:  both | llm_only | static_only | anomaly
 """
 
-import torch
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
-import numpy as np
 
-from .codebert_model import CodeBERTVulnerabilityDetector
+from .ast_extractor import ASTExtractor
+from .deepseek_runner import DeepSeekRunner
+
+logger = logging.getLogger(__name__)
+
+_SEVERITY_ORDER = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+
+# Weighted fusion coefficients (must sum to 1.0)
+_W_ML     = 0.6
+_W_STATIC = 0.4
+
+
+def _cwe_match(cwe_a: Optional[str], cwe_b: Optional[str]) -> bool:
+    """True when both CWE IDs are non-empty and equal (case-insensitive)."""
+    if not cwe_a or not cwe_b:
+        return False
+    return cwe_a.upper() == cwe_b.upper()
 
 
 class HybridVulnerabilityDetector:
     """
-    Hybrid detector that combines:
-    1. ML model (CodeBERT) - for complex/semantic vulnerabilities
-    2. Pattern-based detection - for known/simple vulnerabilities
+    Combines Stream A (static pattern detector) with Stream B (DeepSeek 6.7B
+    semantic analysis) via a weighted scoring fusion engine.
+
+    Detection tags assigned per vulnerability:
+        both        — flagged by both static analyser and LLM
+        llm_only    — flagged by LLM alone (fusion score ≥ ml_threshold)
+        static_only — flagged by static analyser alone
+        anomaly     — LLM flagged VULNERABLE but could not identify a CWE
     """
-    
+
     def __init__(
         self,
-        pattern_detector,  # VulnerabilityDetector instance
-        ml_model_path: Optional[str] = None,
+        pattern_detector,                   # VulnerabilityDetector instance (Stream A)
         use_ml: bool = True,
-        ml_threshold: float = 0.7,
-        device: str = 'cpu'
+        ml_threshold: float = 0.35,         # minimum fusion score for llm_only entries
+        device: str = 'auto',               # forwarded to DeepSeekRunner.device_map
+        # legacy param kept for API compatibility — no longer used
+        ml_model_path: Optional[str] = None,
     ):
-        """
-        Initialize hybrid detector
-        
-        Args:
-            pattern_detector: Pattern-based VulnerabilityDetector
-            ml_model_path: Path to trained ML model
-            use_ml: Whether to use ML model
-            ml_threshold: Confidence threshold for ML predictions
-            device: Device to run ML model on
-        """
         self.pattern_detector = pattern_detector
-        self.use_ml = use_ml
-        self.ml_threshold = ml_threshold
-        self.device = device
-        self.ml_model = None
-        
-        # Load ML model if available
-        if use_ml and ml_model_path and Path(ml_model_path).exists():
-            try:
-                print(f"🤖 Loading ML model from {ml_model_path}...")
-                self.ml_model = CodeBERTVulnerabilityDetector.load_model(
-                    ml_model_path,
-                    device=device
-                )
-                print("✅ ML model loaded successfully")
-            except Exception as e:
-                print(f"⚠️  Failed to load ML model: {e}")
-                print("   Falling back to pattern-based detection only")
-                self.use_ml = False
-        else:
-            self.use_ml = False
-            if use_ml:
-                print("⚠️  ML model not found. Using pattern-based detection only.")
-    
+        self.use_ml           = use_ml
+        self.ml_threshold     = ml_threshold
+
+        self.ast_extractor   = ASTExtractor()
+        self.deepseek_runner = DeepSeekRunner(device_map=device)
+        self.last_ds_result: Optional[Dict] = None   # accessible by code_analyzer
+
+        if use_ml:
+            logger.info("HybridDetector ready — DeepSeek loads lazily on first inference.")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def detect_vulnerabilities(
         self,
         code: str,
         language: str,
-        ast_data: Optional[Dict] = None
+        file_path: str = "",
+        ast_data: Optional[Dict] = None,    # ignored; AST extracted internally
     ) -> List[Dict]:
         """
-        Detect vulnerabilities using hybrid approach
-        
-        Args:
-            code: Source code
-            language: Programming language
-            ast_data: Parsed AST data
-            
-        Returns:
-            List of detected vulnerabilities
+        Run Stream A (static) + Stream B (DeepSeek) and return a fused,
+        tagged list of vulnerabilities sorted by severity then fusion score.
         """
-        vulnerabilities = []
-        
-        # 1. Pattern-based detection (fast, reliable for known patterns)
-        pattern_vulns = self.pattern_detector.detect_vulnerabilities(
-            code, language, ast_data
-        )
-        
-        # 2. ML-based detection (for semantic/complex vulnerabilities)
-        ml_vulns = []
-        if self.use_ml and self.ml_model:
+        # ── Stream A: static pattern detection ──────────────────────────
+        try:
+            if hasattr(self.pattern_detector, 'detect_vulnerabilities'):
+                static_vulns = self.pattern_detector.detect_vulnerabilities(
+                    code, language, ast_data
+                )
+            else:
+                static_vulns = self.pattern_detector.detect(code, language, file_path)
+        except Exception as exc:
+            logger.warning("Pattern detector error: %s", exc)
+            static_vulns = []
+
+        for v in static_vulns:
+            v.setdefault('detection_method', 'static')
+
+        # ── Stream B: DeepSeek semantic analysis ─────────────────────────
+        ds_result: Optional[Dict] = None
+        if self.use_ml:
             try:
-                ml_vulns = self._ml_detect(code, language)
-            except Exception as e:
-                print(f"⚠️  ML detection error: {e}")
-        
-        # 3. Merge and deduplicate detections
-        vulnerabilities = self._merge_detections(pattern_vulns, ml_vulns, code)
-        
-        return vulnerabilities
-    
-    def _ml_detect(self, code: str, language: str) -> List[Dict]:
-        """
-        Detect vulnerabilities using ML model
-        
-        Args:
-            code: Source code
-            language: Programming language
-            
-        Returns:
-            List of ML-detected vulnerabilities
-        """
-        if not self.ml_model:
-            return []
-        
-        # Get ML prediction
-        prediction = self.ml_model.predict(code, device=self.device)
-        
-        vulnerabilities = []
-        
-        # Only add if confidence is above threshold
-        if prediction['is_vulnerable'] and prediction['vulnerability_score'] >= self.ml_threshold:
-            # Map CWE index to actual CWE ID (would need CWE mapping file)
-            cwe_id = f"CWE-{prediction['predicted_cwe']}"
-            
-            vulnerabilities.append({
-                'type': 'ML-Detected Vulnerability',
-                'cwe': cwe_id,
-                'severity': prediction['predicted_severity'],
-                'confidence': prediction['vulnerability_score'],
-                'line': 0,  # ML doesn't provide line numbers
-                'description': f'ML model detected potential vulnerability (confidence: {prediction["vulnerability_score"]:.2%})',
-                'code_snippet': code[:100] + '...' if len(code) > 100 else code,
-                'detection_method': 'ML'
-            })
-        
-        return vulnerabilities
-    
-    def _merge_detections(
+                ast_info = self.ast_extractor.extract(code, language)
+                ds_result = self.deepseek_runner.run(
+                    code, language, ast_info['paths']
+                )
+            except Exception as exc:
+                logger.warning("DeepSeek inference error: %s", exc)
+
+        self.last_ds_result = ds_result   # expose for code_analyzer
+
+        # ── Fusion engine ─────────────────────────────────────────────────
+        return self._fuse(static_vulns, ds_result, code)
+
+    # ------------------------------------------------------------------
+    # Weighted fusion engine
+    # ------------------------------------------------------------------
+
+    def _fuse(
         self,
-        pattern_vulns: List[Dict],
-        ml_vulns: List[Dict],
-        code: str
+        static_vulns: List[Dict],
+        ds: Optional[Dict],
+        code: str,
     ) -> List[Dict]:
         """
-        Merge and deduplicate pattern and ML detections
-        
-        Args:
-            pattern_vulns: Pattern-based detections
-            ml_vulns: ML-based detections
-            code: Source code
-            
-        Returns:
-            Merged list of vulnerabilities
+        Merge Stream A and Stream B results.
+
+        score = (0.6 × ML_confidence) + (0.4 × static_flag)
+
+        static_flag = 1.0  for every vulnerability the static analyser found
+        ML_confidence      = DeepSeek confidence when it corroborates the same CWE,
+                             0.0 otherwise
         """
-        # Start with pattern-based detections (higher precision)
-        merged = pattern_vulns.copy()
-        
-        # Add detection method tag
-        for vuln in merged:
-            vuln['detection_method'] = 'Pattern'
-        
-        # Add ML detections if they don't overlap with pattern detections
-        for ml_vuln in ml_vulns:
-            # Check if similar vulnerability already detected by patterns
-            is_duplicate = False
-            for pattern_vuln in pattern_vulns:
-                # Consider duplicate if same CWE or similar type
-                if (ml_vuln.get('cwe') == pattern_vuln.get('cwe') or
-                    self._similar_vulnerability_type(ml_vuln['type'], pattern_vuln['type'])):
-                    # Enhance pattern detection with ML confidence
-                    pattern_vuln['ml_confidence'] = ml_vuln['confidence']
-                    is_duplicate = True
-                    break
-            
-            if not is_duplicate:
-                # Add unique ML detection
-                merged.append(ml_vuln)
-        
-        # Sort by severity and confidence
-        severity_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
-        merged.sort(key=lambda x: (
-            severity_order.get(x['severity'], 4),
-            -x.get('confidence', 0.5)
+        ds_conf    = ds.get('confidence', 0.0)    if ds else 0.0
+        ds_verdict = ds.get('verdict', 'CLEAN')   if ds else 'CLEAN'
+        ds_cwe     = ds.get('cwe_id')             if ds else None
+        ds_anomaly = ds.get('is_anomaly', False)  if ds else False
+        ds_anom_sc = ds.get('anomaly_score', 0.0) if ds else 0.0
+
+        fused: List[Dict] = []
+        llm_cwe_consumed = False    # becomes True once LLM CWE is matched to a static entry
+
+        # ── Annotate each static finding with LLM corroboration ─────────
+        ds_fixed   = ds.get('fixed_code')   if ds else None
+        ds_explain = ds.get('explanation')  if ds else None
+
+        for sv in static_vulns:
+            ml_conf  = 0.0
+            tag      = 'static_only'
+
+            if ds_verdict == 'VULNERABLE':
+                if ds_cwe and _cwe_match(sv.get('cwe'), ds_cwe):
+                    ml_conf          = ds_conf
+                    tag              = 'both'
+                    llm_cwe_consumed = True
+                elif not ds_cwe and ds_anomaly:
+                    ml_conf          = ds_anom_sc
+                    tag              = 'both'
+                    llm_cwe_consumed = True
+
+            score = _W_ML * ml_conf + _W_STATIC * 1.0
+            entry = {
+                **sv,
+                'fusion_score':     round(score, 4),
+                'detection_method': tag,
+                'llm_confidence':   round(ml_conf, 4),
+                'static_flag':      1.0,
+            }
+            # Attach DeepSeek's fix and explanation to corroborated entries
+            if tag == 'both' and ds_fixed:
+                entry['fixed_code']  = ds_fixed
+                entry['explanation'] = ds_explain or sv.get('description', '')
+            fused.append(entry)
+
+        # ── LLM-only: DeepSeek found something the static pass missed ────
+        if ds and ds_verdict == 'VULNERABLE' and not llm_cwe_consumed:
+            score = _W_ML * ds_conf  # static_flag = 0
+            if score >= self.ml_threshold:
+                fused.append(self._llm_only_entry(ds, code, score))
+
+        # ── Anomaly: VULNERABLE verdict but no parseable CWE ─────────────
+        if ds and ds_anomaly and not llm_cwe_consumed:
+            anom_score = _W_ML * ds_anom_sc
+            fused.append(self._anomaly_entry(ds, code, anom_score))
+
+        # Sort by severity (low index = higher severity), then fusion score DESC
+        fused.sort(key=lambda x: (
+            _SEVERITY_ORDER.get(x.get('severity', 'Medium'), 4),
+            -x.get('fusion_score', 0.0),
         ))
-        
-        return merged
-    
-    def _similar_vulnerability_type(self, type1: str, type2: str) -> bool:
-        """Check if two vulnerability types are similar"""
-        type1_lower = type1.lower()
-        type2_lower = type2.lower()
-        
-        # Define similar vulnerability groups
-        similar_groups = [
-            {'sql injection', 'sqli', 'sql'},
-            {'xss', 'cross-site scripting', 'cross site scripting'},
-            {'command injection', 'command exec', 'code injection'},
-            {'buffer overflow', 'buffer', 'memory corruption'},
-        ]
-        
-        for group in similar_groups:
-            if any(term in type1_lower for term in group) and any(term in type2_lower for term in group):
-                return True
-        
-        return False
-    
-    def get_statistics(self) -> Dict:
-        """Get detection statistics"""
+
+        return fused
+
+    # ------------------------------------------------------------------
+    # Entry builders for LLM-only and anomaly detections
+    # ------------------------------------------------------------------
+
+    def _llm_only_entry(self, ds: Dict, code: str, score: float) -> Dict:
+        snippet = (code[:120] + '…') if len(code) > 120 else code
         return {
-            'ml_enabled': self.use_ml,
-            'ml_model_loaded': self.ml_model is not None,
-            'detection_methods': ['Pattern-based', 'ML-based'] if self.use_ml else ['Pattern-based'],
-            'ml_threshold': self.ml_threshold,
-            'device': self.device
+            'type':             ds.get('cwe_name') or 'LLM-Detected Vulnerability',
+            'cwe':              ds.get('cwe_id'),
+            'severity':         'High',
+            'confidence':       ds['confidence'],
+            'line_number':      0,
+            'description':      ds.get('explanation', ''),
+            'fixed_code':       ds.get('fixed_code'),
+            'code_snippet':     snippet,
+            'detection_method': 'llm_only',
+            'fusion_score':     round(score, 4),
+            'llm_confidence':   ds['confidence'],
+            'static_flag':      0.0,
+        }
+
+    def _anomaly_entry(self, ds: Dict, code: str, score: float) -> Dict:
+        snippet = (code[:120] + '…') if len(code) > 120 else code
+        base_expl = ds.get('explanation', '')
+        description = (
+            'DeepSeek flagged anomalous security-relevant behaviour without '
+            'matching a known CWE. Manual review recommended. ' + base_expl
+        )[:800]
+        return {
+            'type':             'Potential Security Anomaly',
+            'cwe':              None,
+            'severity':         'Medium',
+            'confidence':       ds['anomaly_score'],
+            'line_number':      0,
+            'description':      description,
+            'fixed_code':       ds.get('fixed_code'),
+            'code_snippet':     snippet,
+            'detection_method': 'anomaly',
+            'fusion_score':     round(score, 4),
+            'llm_confidence':   ds['anomaly_score'],
+            'static_flag':      0.0,
+        }
+
+    # ------------------------------------------------------------------
+    # Diagnostics
+    # ------------------------------------------------------------------
+
+    def get_statistics(self) -> Dict:
+        return {
+            'ml_enabled':      self.use_ml,
+            'deepseek_loaded': self.deepseek_runner.is_loaded(),
+            'ast_available':   self.ast_extractor.available,
+            'fusion_weights':  {'ml': _W_ML, 'static': _W_STATIC},
+            'detection_tags':  ['both', 'llm_only', 'static_only', 'anomaly'],
         }
 
 
+# ---------------------------------------------------------------------------
+# MLModelManager — preserved for backward compatibility
+# ---------------------------------------------------------------------------
+
 class MLModelManager:
-    """Manages ML model lifecycle"""
-    
+    """Manages model artefact files under models_dir."""
+
     def __init__(self, models_dir: str = 'models/checkpoints'):
-        """Initialize model manager"""
         self.models_dir = Path(models_dir)
         self.models_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def get_best_model_path(self) -> Optional[Path]:
-        """Get path to best trained model"""
-        best_model = self.models_dir / 'best_model.pt'
-        if best_model.exists():
-            return best_model
-        
-        final_model = self.models_dir / 'final_model.pt'
-        if final_model.exists():
-            return final_model
-        
+        for name in ('best_model.pt', 'final_model.pt'):
+            p = self.models_dir / name
+            if p.exists():
+                return p
         return None
-    
+
     def list_available_models(self) -> List[Path]:
-        """List all available model checkpoints"""
         return list(self.models_dir.glob('*.pt'))
-    
+
     def get_model_info(self, model_path: Path) -> Dict:
-        """Get information about a model checkpoint"""
         try:
+            import torch
             checkpoint = torch.load(model_path, map_location='cpu')
             return {
-                'path': str(model_path),
-                'epoch': checkpoint.get('epoch', 'unknown'),
+                'path':    str(model_path),
+                'epoch':   checkpoint.get('epoch', 'unknown'),
                 'metrics': checkpoint.get('metrics', {}),
-                'size_mb': model_path.stat().st_size / (1024 * 1024)
+                'size_mb': model_path.stat().st_size / (1024 * 1024),
             }
-        except Exception as e:
-            return {'path': str(model_path), 'error': str(e)}
-
-
-if __name__ == "__main__":
-    # Test hybrid detector
-    print("✅ Hybrid detection system ready")
-    
-    manager = MLModelManager()
-    best_model = manager.get_best_model_path()
-    
-    if best_model:
-        print(f"   Best model found: {best_model}")
-        info = manager.get_model_info(best_model)
-        print(f"   Model info: {info}")
-    else:
-        print("   No trained model found. Run train_model.py first.")
+        except Exception as exc:
+            return {'path': str(model_path), 'error': str(exc)}

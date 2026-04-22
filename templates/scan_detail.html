@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block title %}Scan — {{ scan.software_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── page layout ── */
+.scan-header { margin-bottom: 2rem; }
+.scan-header h1 { font-size: 1.6rem; font-weight: 700; margin: 0; }
+.scan-header .meta { color: #6b7280; font-size: .875rem; margin-top: .25rem; }
+
+/* ── stat cards ── */
+.stat-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 2rem; }
+.stat-box  { flex: 1; min-width: 130px; background: #fff; border-radius: 10px;
+             padding: 1rem 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.stat-box .val { font-size: 2rem; font-weight: 700; line-height: 1; }
+.stat-box .lbl { font-size: .75rem; color: #6b7280; margin-top: .25rem; }
+.stat-box.c-red   .val { color: #dc2626; }
+.stat-box.c-orange .val{ color: #ea580c; }
+.stat-box.c-yellow .val{ color: #ca8a04; }
+.stat-box.c-blue  .val { color: #2563eb; }
+.stat-box.c-green .val { color: #16a34a; }
+
+/* ── file block ── */
+.file-block { background: #fff; border-radius: 12px; margin-bottom: 2rem;
+              box-shadow: 0 1px 6px rgba(0,0,0,.08); overflow: hidden; }
+.file-block-header { background: #f8fafc; border-bottom: 1px solid #e5e7eb;
+                     padding: .75rem 1.25rem; display: flex; align-items: center; gap: .75rem; }
+.file-block-header .fname { font-family: monospace; font-size: .9rem; font-weight: 600; }
+.file-block-header .lang-badge { background: #dbeafe; color: #1d4ed8;
+                                  border-radius: 4px; padding: 2px 8px; font-size: .75rem; }
+
+/* ── vulnerability card ── */
+.vuln-card { border-left: 4px solid #e5e7eb; margin: 1rem 1.25rem;
+             border-radius: 6px; overflow: hidden; background: #fafafa; }
+.vuln-card.sev-critical { border-color: #dc2626; }
+.vuln-card.sev-high     { border-color: #ea580c; }
+.vuln-card.sev-medium   { border-color: #ca8a04; }
+.vuln-card.sev-low      { border-color: #2563eb; }
+
+.vuln-header { padding: .6rem 1rem; display: flex; align-items: center;
+               flex-wrap: wrap; gap: .5rem; cursor: pointer;
+               user-select: none; background: #fff; }
+.vuln-header:hover { background: #f9fafb; }
+
+.sev-badge { border-radius: 4px; padding: 2px 8px; font-size: .72rem;
+             font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.sev-badge.Critical { background: #fee2e2; color: #dc2626; }
+.sev-badge.High     { background: #ffedd5; color: #ea580c; }
+.sev-badge.Medium   { background: #fef9c3; color: #92400e; }
+.sev-badge.Low      { background: #dbeafe; color: #1d4ed8; }
+
+.cwe-badge  { background: #f3f4f6; color: #374151; border-radius: 4px;
+              padding: 2px 8px; font-size: .72rem; font-family: monospace; }
+.det-badge  { border-radius: 4px; padding: 2px 8px; font-size: .72rem; font-weight: 500; }
+.det-badge.both        { background: #dcfce7; color: #166534; }
+.det-badge.llm_only    { background: #ede9fe; color: #5b21b6; }
+.det-badge.static_only { background: #f3f4f6; color: #374151; }
+.det-badge.anomaly     { background: #fef3c7; color: #92400e; }
+
+.vuln-type { font-weight: 600; font-size: .9rem; }
+.vuln-line { font-size: .8rem; color: #6b7280; font-family: monospace; }
+.chevron   { margin-left: auto; color: #9ca3af; transition: transform .2s; }
+.vuln-header.open .chevron { transform: rotate(180deg); }
+
+/* ── vuln body ── */
+.vuln-body { padding: 0 1rem 1rem; display: none; }
+.vuln-body.open { display: block; }
+
+.explanation { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px;
+               padding: .75rem 1rem; font-size: .875rem; color: #0c4a6e;
+               margin-bottom: 1rem; line-height: 1.6; }
+
+/* ── code panes ── */
+.code-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+              margin-top: .75rem; }
+@media (max-width: 768px) { .code-panes { grid-template-columns: 1fr; } }
+
+.code-pane { border-radius: 8px; overflow: hidden; }
+.code-pane-header { padding: .45rem .75rem; font-size: .75rem; font-weight: 600;
+                    letter-spacing: .4px; }
+.code-pane.vuln .code-pane-header  { background: #fee2e2; color: #991b1b; }
+.code-pane.fixed .code-pane-header { background: #dcfce7; color: #166534; }
+.code-pane pre  { margin: 0; padding: .75rem; font-size: .8rem; line-height: 1.5;
+                  overflow-x: auto; max-height: 400px; overflow-y: auto; }
+.code-pane.vuln  pre { background: #fff5f5; }
+.code-pane.fixed pre { background: #f0fdf4; }
+.code-pane pre code { font-family: 'Fira Code', 'Cascadia Code', monospace; }
+
+.no-fix { color: #9ca3af; font-style: italic; font-size: .8rem; padding: .75rem; }
+
+/* ── deepseek full file section ── */
+.ds-section { margin: 1rem 1.25rem 1.5rem; border-radius: 8px; overflow: hidden;
+              border: 1px solid #d1fae5; }
+.ds-section-header { background: #d1fae5; color: #065f46; padding: .6rem 1rem;
+                     font-size: .8rem; font-weight: 600; display: flex;
+                     align-items: center; gap: .5rem; }
+.ds-section pre  { margin: 0; padding: 1rem; background: #f0fdf4;
+                   font-size: .8rem; overflow-x: auto; max-height: 500px; overflow-y: auto; }
+
+/* ── confidence bar ── */
+.conf-bar { height: 4px; border-radius: 2px; background: #e5e7eb; margin-top: .5rem; }
+.conf-bar-fill { height: 100%; border-radius: 2px; background: #16a34a; }
+
+/* ── empty state ── */
+.empty-state { text-align: center; padding: 3rem 1rem; color: #6b7280; }
+.empty-state i { font-size: 3rem; color: #86efac; margin-bottom: 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── header ── #}
+<div class="scan-header">
+  <nav aria-label="breadcrumb" style="margin-bottom:.5rem">
+    <ol class="breadcrumb mb-0" style="font-size:.85rem">
+      <li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="{{ url_for('scans') }}">Scans</a></li>
+      <li class="breadcrumb-item active">{{ scan.software_name }}</li>
+    </ol>
+  </nav>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <h1>{{ scan.software_name }}</h1>
+      <div class="meta">
+        ID: <code>{{ scan.id }}</code> &nbsp;·&nbsp; {{ scan.date }}
+        {% if scan.version %} &nbsp;·&nbsp; v{{ scan.version }}{% endif %}
+        &nbsp;·&nbsp;
+        {% if scan.status == 'completed' %}
+          <span class="badge bg-success">Completed</span>
+        {% elif scan.status == 'failed' %}
+          <span class="badge bg-danger">Failed</span>
+        {% else %}
+          <span class="badge bg-warning text-dark">Running</span>
+        {% endif %}
+      </div>
+    </div>
+    {% if scan.status == 'completed' %}
+    <a href="{{ url_for('download_report', scan_id=scan.id) }}" class="btn btn-success btn-sm">
+      <i class="fas fa-file-excel me-1"></i> Download Report
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+{# ── stat row ── #}
+{% if scan.status == 'completed' %}
+<div class="stat-row">
+  <div class="stat-box c-red">
+    <div class="val">{{ scan.vulnerability_count or 0 }}</div>
+    <div class="lbl">Total Issues</div>
+  </div>
+  <div class="stat-box c-red">
+    <div class="val">{{ scan.critical_count or 0 }}</div>
+    <div class="lbl">Critical</div>
+  </div>
+  <div class="stat-box c-orange">
+    <div class="val">{{ scan.high_count or 0 }}</div>
+    <div class="lbl">High</div>
+  </div>
+  <div class="stat-box c-yellow">
+    <div class="val">{{ scan.medium_count or 0 }}</div>
+    <div class="lbl">Medium</div>
+  </div>
+  <div class="stat-box c-blue">
+    <div class="val">{{ scan.low_count or 0 }}</div>
+    <div class="lbl">Low</div>
+  </div>
+</div>
+{% endif %}
+
+{# ── failed state ── #}
+{% if scan.status == 'failed' %}
+<div class="file-block">
+  <div class="empty-state">
+    <i class="fas fa-exclamation-triangle" style="color:#dc2626"></i>
+    <h5 class="text-danger">Scan Failed</h5>
+    {% if scan.error %}<div class="alert alert-danger d-inline-block">{{ scan.error }}</div>{% endif %}
+    <br><a href="{{ url_for('upload_page') }}" class="btn btn-primary mt-2">Try Again</a>
+  </div>
+</div>
+{% endif %}
+
+{# ── no files ── #}
+{% if scan.status == 'completed' and (not files or files|length == 0) %}
+<div class="file-block">
+  <div class="empty-state">
+    <i class="fas fa-check-circle"></i>
+    <h5>No Vulnerabilities Found</h5>
+    <p>No supported source files detected or no vulnerabilities found.</p>
+    {% if scan.warning %}<div class="alert alert-warning d-inline-block">{{ scan.warning }}</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ── per-file blocks ── #}
+{% for file in files %}
+{% set ds = file.deepseek_analysis %}
+{% set vulns = file.vulnerabilities or [] %}
+
+<div class="file-block">
+
+  {# file header #}
+  <div class="file-block-header">
+    <i class="fas fa-file-code" style="color:#6b7280"></i>
+    <span class="fname">{{ file.file_path.split('\\')[-1] if '\\' in file.file_path else file.file_path.split('/')[-1] }}</span>
+    <span class="lang-badge">{{ file.language | upper }}</span>
+    <span style="font-size:.75rem;color:#6b7280;margin-left:auto">
+      {{ file.lines_of_code }} lines &nbsp;·&nbsp; {{ file.processing_time }}s
+      {% if file.detector_mode == 'deepseek' or file.detector_mode == 'hybrid' %}
+        &nbsp;·&nbsp; <i class="fas fa-robot" style="color:#7c3aed"></i> DeepSeek
+      {% endif %}
+    </span>
+  </div>
+
+  {# ── DeepSeek summary banner (if it ran) ── #}
+  {% if ds %}
+  <div style="padding:.75rem 1.25rem;background:#faf5ff;border-bottom:1px solid #e9d5ff;
+              display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;font-weight:600;color:#6d28d9">
+      <i class="fas fa-robot"></i> DeepSeek Analysis
+    </div>
+    <span class="sev-badge {{ 'High' if ds.verdict == 'VULNERABLE' else 'Low' }}"
+          style="background:{{ '#fee2e2' if ds.verdict == 'VULNERABLE' else '#dcfce7' }};
+                 color:{{ '#dc2626' if ds.verdict == 'VULNERABLE' else '#166534' }}">
+      {{ ds.verdict }}
+    </span>
+    {% if ds.cwe_id %}
+      <span class="cwe-badge">{{ ds.cwe_id }}</span>
+      {% if ds.cwe_name %}<span style="font-size:.8rem;color:#374151">{{ ds.cwe_name }}</span>{% endif %}
+    {% endif %}
+    <span style="font-size:.8rem;color:#6b7280">
+      Confidence: <strong>{{ "%.0f"|format(ds.confidence * 100) }}%</strong>
+    </span>
+    <div class="conf-bar" style="width:80px;margin:0">
+      <div class="conf-bar-fill" style="width:{{ "%.0f"|format(ds.confidence * 100) }}%"></div>
+    </div>
+    {% if ds.is_anomaly %}
+      <span class="det-badge anomaly"><i class="fas fa-exclamation-triangle me-1"></i>Anomaly Detected</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── no vulns in this file ── #}
+  {% if vulns|length == 0 %}
+  <div class="empty-state" style="padding:2rem">
+    <i class="fas fa-check-circle" style="font-size:2rem;color:#86efac"></i>
+    <p style="margin:.5rem 0 0;color:#6b7280">No vulnerabilities detected in this file.</p>
+  </div>
+
+  {% else %}
+
+  {# ── vulnerability cards ── #}
+  {% for vuln in vulns %}
+  {% set sev = vuln.severity | default('Medium') %}
+  {% set vid = loop.index %}
+  <div class="vuln-card sev-{{ sev | lower }}">
+    <div class="vuln-header" onclick="toggleVuln('v{{ scan.id }}-{{ loop.index0 }}')" id="vh-v{{ scan.id }}-{{ loop.index0 }}">
+      <span class="sev-badge {{ sev }}">{{ sev }}</span>
+      {% if vuln.cwe %}<span class="cwe-badge">{{ vuln.cwe }}</span>{% endif %}
+      <span class="vuln-type">{{ vuln.type | default('Unknown') }}</span>
+      {% if vuln.line_number and vuln.line_number != 0 %}
+        <span class="vuln-line">Line {{ vuln.line_number }}</span>
+      {% endif %}
+      {% set dm = vuln.detection_method | default('static_only') %}
+      <span class="det-badge {{ dm }}">
+        {% if dm == 'both' %}<i class="fas fa-layer-group me-1"></i>AI + Static
+        {% elif dm == 'llm_only' %}<i class="fas fa-robot me-1"></i>AI Only
+        {% elif dm == 'anomaly' %}<i class="fas fa-exclamation-triangle me-1"></i>Anomaly
+        {% else %}<i class="fas fa-search me-1"></i>Static
+        {% endif %}
+      </span>
+      {% if vuln.fusion_score %}
+        <span style="font-size:.75rem;color:#9ca3af">Score: {{ "%.2f"|format(vuln.fusion_score) }}</span>
+      {% endif %}
+      <i class="fas fa-chevron-down chevron"></i>
+    </div>
+
+    <div class="vuln-body" id="vb-v{{ scan.id }}-{{ loop.index0 }}">
+      {# explanation #}
+      {% set expl = vuln.explanation | default(vuln.description) %}
+      {% if expl %}
+      <div class="explanation">
+        <i class="fas fa-info-circle me-1"></i>{{ expl }}
+      </div>
+      {% endif %}
+
+      {# code panes #}
+      <div class="code-panes">
+        {# left: vulnerable snippet #}
+        <div class="code-pane vuln">
+          <div class="code-pane-header">
+            <i class="fas fa-bug me-1"></i> VULNERABLE CODE
+          </div>
+          {% if vuln.code_snippet %}
+          <pre><code>{{ vuln.code_snippet }}</code></pre>
+          {% else %}
+          <div class="no-fix">No snippet available for this finding.</div>
+          {% endif %}
+        </div>
+
+        {# right: DeepSeek fixed code #}
+        <div class="code-pane fixed">
+          <div class="code-pane-header">
+            <i class="fas fa-shield-alt me-1"></i> SECURE CODE (DeepSeek)
+          </div>
+          {% if vuln.fixed_code %}
+          <pre><code>{{ vuln.fixed_code }}</code></pre>
+          {% elif ds and ds.fixed_code %}
+          <pre><code>{{ ds.fixed_code }}</code></pre>
+          {% else %}
+          <div class="no-fix">
+            {% if vuln.detection_method == 'static_only' %}
+              Run with DeepSeek engine to get AI-generated fixes.
+            {% else %}
+              DeepSeek did not generate a fix for this finding.
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {# CVE / CWE info row #}
+      <div style="margin-top:.75rem;display:flex;gap:.75rem;flex-wrap:wrap;font-size:.8rem;color:#6b7280">
+        {% if vuln.cve and vuln.cve != 'N/A' %}
+          <span><i class="fas fa-database me-1"></i>CVE: <code>{{ vuln.cve }}</code></span>
+        {% endif %}
+        {% if vuln.cwe %}
+          <span><i class="fas fa-tag me-1"></i>CWE: <code>{{ vuln.cwe }}</code></span>
+        {% endif %}
+        {% if vuln.llm_confidence %}
+          <span><i class="fas fa-robot me-1"></i>AI Confidence: {{ "%.0f"|format(vuln.llm_confidence * 100) }}%</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {# ── DeepSeek full fixed file (if available and different from per-vuln) ── #}
+  {% if ds and ds.fixed_code and ds.explanation %}
+  <div class="ds-section" style="margin-bottom:1.25rem">
+    <div class="ds-section-header">
+      <i class="fas fa-robot"></i>
+      DeepSeek — Complete Secure Version of This File
+    </div>
+    <pre><code>{{ ds.fixed_code }}</code></pre>
+  </div>
+  {% endif %}
+
+  {% endif %}{# end if vulns #}
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleVuln(id) {
+  const header = document.getElementById('vh-' + id);
+  const body   = document.getElementById('vb-' + id);
+  if (!body) return;
+  const isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  header.classList.toggle('open', !isOpen);
+}
+
+// Auto-open the first vulnerability in each file
+document.addEventListener('DOMContentLoaded', function() {
+  const firstHeaders = document.querySelectorAll('.vuln-card:first-of-type .vuln-header');
+  firstHeaders.forEach(function(h) {
+    h.click();
+  });
+});
+</script>
+{% endblock %}

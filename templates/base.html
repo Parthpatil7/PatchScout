@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PatchScout{% endblock %} - Vulnerability Scanner</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    {% block extra_css %}{% endblock %}
+</head>
+
+<body>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-shield-alt"></i>
+                <span>PatchScout</span>
+            </div>
+            <button class="sidebar-toggle d-lg-none" id="sidebarToggle">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <nav class="sidebar-menu">
+            <a href="{{ url_for('dashboard') }}" class="menu-item {% if request.endpoint == 'dashboard' %}active{% endif %}">
+                <i class="fas fa-chart-line"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="{{ url_for('upload_page') }}" class="menu-item {% if request.endpoint == 'upload_page' %}active{% endif %}">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <span>Upload Software</span>
+            </a>
+            <a href="{{ url_for('scans') }}" class="menu-item {% if request.endpoint == 'scans' %}active{% endif %}">
+                <i class="fas fa-history"></i>
+                <span>Scan History</span>
+            </a>
+            
+            <div class="menu-divider"></div>
+            
+            <a href="#" class="menu-item" onclick="showAbout(); return false;">
+                <i class="fas fa-info-circle"></i>
+                <span>About</span>
+            </a>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Top Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom">
+            <div class="container-fluid">
+                <button class="btn btn-link d-lg-none" id="mobileSidebarToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                
+                <div class="navbar-brand d-lg-none">
+                    <i class="fas fa-shield-alt text-primary"></i> PatchScout
+                </div>
+                
+                <div class="ms-auto d-flex align-items-center">
+                    <span class="badge bg-primary me-3">
+                        <i class="fas fa-user"></i> Security Analyst
+                    </span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Page Content -->
+        <div class="content-area">
+            {% block content %}{% endblock %}
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="container-fluid">
+                <div class="text-center text-muted">
+                    © 2025 PatchScout - Automated Vulnerability Detection System
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    
+    <script>
+        function showAbout() {
+            alert('PatchScout - Automated Vulnerability Detection System\n\n' +
+                  'Features:\n' +
+                  '• Pattern-based vulnerability detection\n' +
+                  '• Support for Python, C/C++, PHP\n' +
+                  '• Detailed vulnerability reports with remediation\n' +
+                  '• CVE/CWE mapping\n' +
+                  '• OWASP Top 10 coverage\n' +
+                  '• Automated secure code suggestions');
+        }
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

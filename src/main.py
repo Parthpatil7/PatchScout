@@ -16,6 +16,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from .analyzers import CodeAnalyzer, LanguageDetector
 from .reporting import ReportGenerator
 from .utils import ConfigLoader
+from .detectors import RemediationEngine
 
 console = Console()
 
@@ -94,6 +95,12 @@ Examples:
         choices=['excel', 'json', 'both'],
         default='excel',
         help="Output format (default: excel)"
+    )
+    
+    parser.add_argument(
+        "--remediation",
+        action="store_true",
+        help="Generate remediation suggestions for detected vulnerabilities"
     )
     
     return parser.parse_args()
@@ -283,6 +290,14 @@ def main():
                 vuln['language'] = result.get('language', 'Unknown')
                 all_vulnerabilities.append(vuln)
         
+        # Generate remediation suggestions if requested
+        remediations = None
+        if args.remediation:
+            console.print("[yellow]🔧 Generating remediation suggestions...[/yellow]")
+            remediation_engine = RemediationEngine()
+            remediations = remediation_engine.generate_remediation_report(all_vulnerabilities)
+            console.print(f"[green]✓ Generated {len(remediations)} remediation suggestions[/green]")
+        
         # Ensure output directory exists
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,9 +308,12 @@ def main():
             report_generator.generate_excel_report(
                 all_vulnerabilities,
                 excel_output,
-                team_name=args.team_name
+                team_name=args.team_name,
+                remediations=remediations
             )
             console.print(f"[cyan]📊 Excel report saved to: {excel_output}[/cyan]")
+            if remediations:
+                console.print(f"[cyan]   ✓ Includes remediation suggestions sheet[/cyan]")
         
         if args.format in ['json', 'both']:
             json_output = str(output_path.with_suffix('.json'))
@@ -304,6 +322,8 @@ def main():
         
         console.print("\n[bold green]✨ PatchScout analysis completed successfully![/bold green]")
         console.print(f"[dim]Total vulnerabilities detected: {len(all_vulnerabilities)}[/dim]")
+        if remediations:
+            console.print(f"[dim]Remediation suggestions provided: {len(remediations)}[/dim]")
         
     except Exception as e:
         console.print(f"[red]Error generating report: {str(e)}[/red]")

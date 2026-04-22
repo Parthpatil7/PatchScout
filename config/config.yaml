@@ -2,11 +2,11 @@
 
 # Model Settings
 model:
-  type: "transformer"  # Options: transformer, llm_api, hybrid
-  name: "microsoft/codebert-base"
+  type: "deepseek"  # Options: pattern, deepseek, hybrid
+  name: "deepseek-ai/deepseek-coder-6.7b-instruct"
   max_length: 512
   batch_size: 16
-  device: "cuda"  # Options: cuda, cpu, mps
+  device: "auto"  # Options: auto, cuda, cpu, mps
 
 # LLM API Settings (if using OpenAI, Claude, etc.)
 llm_api:
@@ -77,6 +77,8 @@ severity:
 
 # Detection Settings
 detection:
+  engine: "deepseek"  # Options: pattern, deepseek, hybrid
+  ml_threshold: 0.35
   enable_static_analysis: true
   enable_dynamic_analysis: false  # Stage II
   enable_dependency_scan: true

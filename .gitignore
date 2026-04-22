@@ -87,3 +87,36 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# PatchScout runtime directories
+uploads/
+web_results/
+given_data/
+test_stack1/
+temp_all_extracted/
+
+# Scan outputs
+output/all_software_analysis/
+output/given_data_results/
+
+# Markdown scratch files
+BUG_ANALYSIS_LABELS_ZERO.md
+COLAB_CELLS_COPY_PASTE.md
+COLAB_ERROR_FIX.md
+COLAB_INCREMENTAL_TRAINING.md
+COLAB_PRIVATE_REPO_SOLUTION.md
+FAST_TRACK_GUIDE.md
+FRONTEND_IMPLEMENTATION.md
+HOW_TO_TEST_GIVEN_DATA.md
+INCREMENTAL_ROADMAP.md
+QUICK_START.md
+REMEDIATION_GUIDE.md
+REMEDIATION_IMPLEMENTATION_SUMMARY.md
+REMEDIATION_QUICK_REFERENCE.md
+RESULTS_AND_ANALYSIS.md
+SIMPLE_TEST_GUIDE.md
+SUPPORTED_LANGUAGES.md
+TEST_SUCCESS_README.md
+TRAINING_ISSUE_FIXED.md
+VISUALIZATION_GUIDE.md
+WEB_APP_README.md

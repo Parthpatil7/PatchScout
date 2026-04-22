@@ -37,7 +37,8 @@ class ReportGenerator:
         self, 
         vulnerabilities: List[Dict[str, Any]], 
         output_path: str,
-        team_name: str = "Team_Name"
+        team_name: str = "Team_Name",
+        remediations: List[Dict[str, Any]] = None
     ):
         """
         Generate Excel report in competition format
@@ -46,6 +47,7 @@ class ReportGenerator:
             vulnerabilities: List of detected vulnerabilities
             output_path: Path to save the Excel file
             team_name: Name of the team (for filename)
+            remediations: Optional list of remediation suggestions
         """
         # Prepare data for DataFrame
         report_data = []
@@ -82,6 +84,11 @@ class ReportGenerator:
             # Add summary sheet
             summary_df = self._generate_summary(vulnerabilities)
             summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Add remediation sheet if available
+            if remediations:
+                remediation_df = self._generate_remediation_sheet(remediations)
+                remediation_df.to_excel(writer, sheet_name='Remediation', index=False)
         
         return output_path
     
@@ -136,6 +143,51 @@ class ReportGenerator:
         ]
         
         return pd.DataFrame(summary_data)
+    
+    def _generate_remediation_sheet(self, remediations: List[Dict[str, Any]]) -> pd.DataFrame:
+        """
+        Generate remediation recommendations sheet
+        
+        Args:
+            remediations: List of remediation suggestions
+            
+        Returns:
+            DataFrame with remediation information
+        """
+        remediation_data = []
+        
+        for idx, rem in enumerate(remediations, start=1):
+            # Format recommendations as bullet points
+            recommendations = '\n• ' + '\n• '.join(rem.get('recommendations', []))
+            
+            row = {
+                "S.No": idx,
+                "Vulnerability Type": rem.get('vulnerability_type', 'Unknown'),
+                "Language": rem.get('language', 'Unknown'),
+                "File": rem.get('file_path', 'Unknown'),
+                "Line": rem.get('line_number', 'N/A'),
+                "Original Code": rem.get('original_code', ''),
+                "Description": rem.get('description', ''),
+                "Explanation": rem.get('explanation', ''),
+                "Secure Code Example": rem.get('secure_example', ''),
+                "Recommendations": recommendations
+            }
+            remediation_data.append(row)
+        
+        columns = [
+            "S.No",
+            "Vulnerability Type",
+            "Language",
+            "File",
+            "Line",
+            "Original Code",
+            "Description",
+            "Explanation",
+            "Secure Code Example",
+            "Recommendations"
+        ]
+        
+        return pd.DataFrame(remediation_data, columns=columns)
     
     def generate_json_report(self, vulnerabilities: List[Dict[str, Any]], output_path: str):
         """Generate JSON format report"""

@@ -3,10 +3,13 @@
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import time
+import logging
 
 from ..parsers import JavaParser, PythonParser, CParser, PHPParser
 from ..detectors import VulnerabilityDetector, CVEMapper, CWEMapper
 from .language_detector import LanguageDetector
+
+logger = logging.getLogger(__name__)
 
 
 class CodeAnalyzer:
@@ -24,6 +27,11 @@ class CodeAnalyzer:
         self.vulnerability_detector = VulnerabilityDetector(config)
         self.cve_mapper = CVEMapper()
         self.cwe_mapper = CWEMapper()
+        self.detector_mode = self._resolve_detector_mode(config)
+        self.hybrid_detector = None
+
+        if self.detector_mode in ('deepseek', 'hybrid'):
+            self._init_hybrid_detector()
         
         # Initialize parsers
         self.parsers = {
@@ -33,6 +41,50 @@ class CodeAnalyzer:
             'cpp': CParser(),  # Use C parser for C++
             'php': PHPParser()
         }
+
+    def _resolve_detector_mode(self, config: Dict[str, Any]) -> str:
+        """Resolve detection mode from config with backward compatibility."""
+        detection_cfg = config.get('detection', {}) if isinstance(config, dict) else {}
+        model_cfg = config.get('model', {}) if isinstance(config, dict) else {}
+
+        mode = str(detection_cfg.get('engine', '')).strip().lower()
+        if mode in ('pattern', 'deepseek', 'hybrid'):
+            return mode
+
+        model_name = str(model_cfg.get('name', '')).strip().lower()
+        if 'deepseek' in model_name:
+            return 'deepseek'
+
+        model_type = str(model_cfg.get('type', '')).strip().lower()
+        if model_type == 'hybrid':
+            return 'hybrid'
+
+        return 'pattern'
+
+    def _init_hybrid_detector(self) -> None:
+        """Initialize DeepSeek-enabled hybrid detector if available."""
+        try:
+            from ..ml.hybrid_detector import HybridVulnerabilityDetector
+
+            model_cfg = self.config.get('model', {}) if isinstance(self.config, dict) else {}
+            detection_cfg = self.config.get('detection', {}) if isinstance(self.config, dict) else {}
+            device = model_cfg.get('device', 'auto')
+            ml_threshold = float(detection_cfg.get('ml_threshold', 0.35))
+
+            self.hybrid_detector = HybridVulnerabilityDetector(
+                pattern_detector=self.vulnerability_detector,
+                use_ml=True,
+                ml_threshold=ml_threshold,
+                device=device
+            )
+            logger.info("Initialized DeepSeek hybrid detector in '%s' mode", self.detector_mode)
+        except Exception as exc:
+            logger.warning(
+                "DeepSeek hybrid detector could not be initialized (%s). Falling back to pattern mode.",
+                exc
+            )
+            self.detector_mode = 'pattern'
+            self.hybrid_detector = None
         
     def analyze_file(self, file_path: str, language: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -76,11 +128,30 @@ class CodeAnalyzer:
             parsed_code = {'success': True, 'code': code, 'lines': code.split('\n')}
         
         # Detect vulnerabilities
-        vulnerabilities = self.vulnerability_detector.detect(code, language, file_path)
-        
-        # Add parser-specific vulnerabilities
-        if parser and parsed_code.get('success'):
-            vulnerabilities.extend(self._get_parser_vulnerabilities(parser, parsed_code))
+        vulnerabilities: List[Dict[str, Any]] = []
+
+        deepseek_analysis = None
+
+        if self.hybrid_detector is not None and self.detector_mode in ('deepseek', 'hybrid'):
+            vulnerabilities = self.hybrid_detector.detect_vulnerabilities(code, language)
+            deepseek_analysis = self.hybrid_detector.last_ds_result
+
+            for vuln in vulnerabilities:
+                vuln.setdefault('file_path', file_path)
+                vuln.setdefault('language', language)
+                vuln.setdefault('line_number', 0)
+                sev = str(vuln.get('severity', 'Medium'))
+                vuln['severity'] = sev[:1].upper() + sev[1:].lower() if sev else 'Medium'
+
+            # In hybrid mode, add parser findings in addition to static+LLM fusion.
+            if self.detector_mode == 'hybrid' and parser and parsed_code.get('success'):
+                vulnerabilities.extend(self._get_parser_vulnerabilities(parser, parsed_code))
+        else:
+            vulnerabilities = self.vulnerability_detector.detect(code, language, file_path)
+
+            # Add parser-specific vulnerabilities
+            if parser and parsed_code.get('success'):
+                vulnerabilities.extend(self._get_parser_vulnerabilities(parser, parsed_code))
         
         # Enhance vulnerabilities with CVE and CWE mappings
         for vuln in vulnerabilities:
@@ -97,11 +168,14 @@ class CodeAnalyzer:
             'success': True,
             'file_path': file_path,
             'language': language,
+            'detector_mode': self.detector_mode,
             'vulnerabilities': vulnerabilities,
             'vulnerability_count': len(vulnerabilities),
             'processing_time': processing_time,
             'file_size_kb': file_size_kb,
-            'lines_of_code': len(code.split('\n'))
+            'lines_of_code': len(code.split('\n')),
+            'deepseek_analysis': deepseek_analysis,  # full DeepSeek result for this file
+            'original_code': code,                   # raw source for side-by-side display
         }
     
     def _get_parser_vulnerabilities(self, parser, parsed_code: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -46,8 +46,13 @@ class ConfigLoader:
         """Get default configuration"""
         return {
             'model': {
-                'type': 'transformer',
-                'name': 'microsoft/codebert-base'
+                'type': 'deepseek',
+                'name': 'deepseek-ai/deepseek-coder-6.7b-instruct',
+                'device': 'auto'
+            },
+            'detection': {
+                'engine': 'deepseek',
+                'ml_threshold': 0.35,
             },
             'languages': {
                 'stage_1': ['java', 'python', 'c', 'cpp', 'php'],

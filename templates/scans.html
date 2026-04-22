@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Scan History{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h1 class="page-title">Scan History</h1>
+        <p class="page-subtitle">View all your security scans</p>
+    </div>
+    <a href="{{ url_for('upload_page') }}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> New Scan
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div class="row align-items-center">
+            <div class="col-md-4">
+                <input type="text" class="form-control" id="searchInput" placeholder="Search by software name...">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="statusFilter">
+                    <option value="">All Status</option>
+                    <option value="completed">Completed</option>
+                    <option value="running">Running</option>
+                    <option value="failed">Failed</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" id="severityFilter">
+                    <option value="">All Severity</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="safe">Safe</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-outline-secondary w-100" onclick="resetFilters()">
+                    <i class="fas fa-redo"></i> Reset
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if scans %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="scansTable">
+                <thead>
+                    <tr>
+                        <th>Software Name</th>
+                        <th>Version</th>
+                        <th>Status</th>
+                        <th>Vulnerabilities</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for scan in scans %}
+                    <tr data-status="{{ scan.status }}" data-name="{{ scan.software_name|lower }}">
+                        <td>
+                            <i class="fas fa-cube text-primary me-2"></i>
+                            <strong>{{ scan.software_name }}</strong>
+                        </td>
+                        <td>{{ scan.version or 'N/A' }}</td>
+                        <td>
+                            {% if scan.status == 'completed' %}
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check"></i> Completed
+                                </span>
+                            {% elif scan.status == 'running' %}
+                                <span class="badge bg-warning">
+                                    <i class="fas fa-spinner fa-spin"></i> Running
+                                </span>
+                            {% else %}
+                                <span class="badge bg-danger">
+                                    <i class="fas fa-times"></i> Failed
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if scan.vulnerability_count %}
+                                <span class="badge bg-danger">{{ scan.vulnerability_count }}</span>
+                            {% else %}
+                                <span class="badge bg-success">None</span>
+                            {% endif %}
+                        </td>
+                        <td><small class="text-muted">{{ scan.date }}</small></td>
+                        <td>
+                            <a href="{{ url_for('scan_detail', scan_id=scan.id) }}" class="btn btn-sm btn-primary">
+                                <i class="fas fa-eye"></i> View
+                            </a>
+                            {% if scan.status == 'completed' %}
+                            <a href="{{ url_for('download_report', scan_id=scan.id) }}" class="btn btn-sm btn-success">
+                                <i class="fas fa-download"></i>
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
+            <h5>No Scans Found</h5>
+            <p class="text-muted">Upload your first software to get started!</p>
+            <a href="{{ url_for('upload_page') }}" class="btn btn-primary mt-3">
+                <i class="fas fa-upload"></i> Upload Software
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    $('#searchInput').on('keyup', function() {
+        const value = $(this).val().toLowerCase();
+        $('#scansTable tbody tr').filter(function() {
+            $(this).toggle($(this).data('name').indexOf(value) > -1);
+        });
+    });
+    
+    $('#statusFilter').on('change', function() {
+        const value = $(this).val().toLowerCase();
+        if (value === '') {
+            $('#scansTable tbody tr').show();
+        } else {
+            $('#scansTable tbody tr').each(function() {
+                $(this).toggle($(this).data('status') === value);
+            });
+        }
+    });
+});
+
+function resetFilters() {
+    $('#searchInput').val('');
+    $('#statusFilter').val('');
+    $('#severityFilter').val('');
+    $('#scansTable tbody tr').show();
+}
+
+// Auto-refresh for running scans
+setInterval(function() {
+    const hasRunningScans = $('#scansTable tbody tr').filter(function() {
+        return $(this).data('status') === 'running';
+    }).length > 0;
+    
+    if (hasRunningScans) {
+        location.reload();
+    }
+}, 10000);
+</script>
+{% endblock %}
