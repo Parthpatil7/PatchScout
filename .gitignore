@@ -82,6 +82,7 @@ temp/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+!PatchScout_Colab.ipynb
 
 # Database
 *.db
