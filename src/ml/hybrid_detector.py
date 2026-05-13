@@ -105,7 +105,7 @@ class HybridVulnerabilityDetector:
         self.last_ds_result = ds_result   # expose for code_analyzer
 
         # ── Fusion engine ─────────────────────────────────────────────────
-        return self._fuse(static_vulns, ds_result, code)
+        return self._fuse(static_vulns, ds_result, code, language)
 
     # ------------------------------------------------------------------
     # Weighted fusion engine
@@ -116,6 +116,7 @@ class HybridVulnerabilityDetector:
         static_vulns: List[Dict],
         ds: Optional[Dict],
         code: str,
+        language: str = '',
     ) -> List[Dict]:
         """
         Merge Stream A and Stream B results.
@@ -165,6 +166,18 @@ class HybridVulnerabilityDetector:
             if tag == 'both' and ds_fixed:
                 entry['fixed_code']  = ds_fixed
                 entry['explanation'] = ds_explain or sv.get('description', '')
+            elif tag == 'static_only' and self.use_ml and self.deepseek_runner.is_loaded():
+                targeted = self.deepseek_runner.get_targeted_fix(
+                    code,
+                    language=language,
+                    cwe_id=sv.get('cwe', ''),
+                    vuln_name=sv.get('type', ''),
+                    line_number=sv.get('line_number', 0),
+                    description=sv.get('description', ''),
+                )
+                if targeted.get('fixed_code'):
+                    entry['fixed_code']  = targeted['fixed_code']
+                    entry['explanation'] = targeted['explanation'] or sv.get('description', '')
             fused.append(entry)
 
         # ── LLM-only: DeepSeek found something the static pass missed ────

@@ -57,6 +57,26 @@ Analyse the code above for security vulnerabilities and respond in this EXACT fo
 
 _MAX_CODE_CHARS = 4_000   # ~1 000 tokens; keeps the prompt inside Ollama's context
 
+_FIX_TEMPLATE = """\
+### Language: {language}
+
+### Code:
+{code}
+
+### Known Vulnerability:
+A security scanner identified {cwe_id} ({vuln_name}) on approximately line {line_number}.
+Description: {description}
+
+### Task:
+The code above contains a known {cwe_id} vulnerability. Provide a secure, corrected version.
+Respond ONLY in this exact format:
+
+1. EXPLANATION: [1-2 sentences on what was wrong and how it is fixed]
+2. FIXED_CODE:
+```
+[complete corrected version of the code]
+```"""
+
 
 class DeepSeekRunner:
     """
@@ -279,6 +299,73 @@ class DeepSeekRunner:
             result["anomaly_score"] = result["confidence"]
 
         return result
+
+    # ── targeted fix ─────────────────────────────────────────────────────────
+
+    def get_targeted_fix(
+        self,
+        code: str,
+        language: str,
+        cwe_id: str,
+        vuln_name: str,
+        line_number: int = 0,
+        description: str = "",
+    ) -> Dict:
+        """
+        Ask DeepSeek to fix a specific, already-identified vulnerability.
+        Used for static_only entries where the full-file analysis said CLEAN.
+        Returns a dict with 'fixed_code' and 'explanation' keys.
+        """
+        if not self._loaded:
+            if not self.load():
+                return {"fixed_code": None, "explanation": ""}
+
+        if len(code) > _MAX_CODE_CHARS:
+            code = code[:_MAX_CODE_CHARS] + "\n... [truncated]"
+
+        user_msg = _FIX_TEMPLATE.format(
+            language=language,
+            code=code,
+            cwe_id=cwe_id or "unknown CWE",
+            vuln_name=vuln_name or "",
+            line_number=line_number,
+            description=description[:400],
+        )
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user",   "content": user_msg},
+        ]
+
+        try:
+            response = requests.post(
+                self.ollama_url,
+                json={
+                    "model":    self.model_id,
+                    "messages": messages,
+                    "stream":   False,
+                    "options": {
+                        "temperature": self.temperature,
+                        "num_predict": self.max_tokens,
+                        "num_ctx":     4096,
+                    },
+                },
+                timeout=120,
+            )
+            response.raise_for_status()
+            raw = response.json()["message"]["content"]
+
+            code_m = re.search(r'```[a-zA-Z]*\n(.*?)```', raw, re.DOTALL)
+            expl_m = re.search(
+                r'1\.\s*EXPLANATION\s*[:\-]?\s*(.+?)(?=\n\s*2\.|```)',
+                raw, re.IGNORECASE | re.DOTALL,
+            )
+            return {
+                "fixed_code":  code_m.group(1).strip() if code_m else None,
+                "explanation": expl_m.group(1).strip()[:800] if expl_m else "",
+            }
+        except Exception as exc:
+            logger.warning("Targeted fix inference error: %s", exc)
+            return {"fixed_code": None, "explanation": ""}
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
